@@ -30,6 +30,15 @@ class WorkerContext(object):
         self.pipe.send(dict(shutdown='hard'))
         os.kill(self.pid, signal.SIGUSR1)
 
+    def read(self):
+        msgs = []
+
+        while self.pipe.poll():
+            msg = self.pipe.recv()
+            msgs.append(msg)
+
+        return msgs
+
 
 class Workers(object):
     """ Holds on to all WorkerContexts and facilitates iteracting with each
@@ -57,6 +66,16 @@ class Workers(object):
         for _ in self.workers:
             queue.put(None)
 
+    def read(self):
+        all_msgs = []
+
+        for worker in self.workers:
+            msg_list = worker.read()
+            for msg in msg_list:
+                all_msgs.append(msg)
+
+        return all_msgs
+
 
 class Worker(object):
     """ This is the state of the worker from the point of view of the worker
@@ -73,7 +92,6 @@ class Worker(object):
     def start(cls, name, queue, pipe, work_fn):
         worker = cls(name, queue, pipe, work_fn)
 
-        signal.signal(signal.SIGINT, worker.signal_handler)
         signal.signal(signal.SIGUSR1, worker.signal_handler)
 
         worker.run()
@@ -104,7 +122,7 @@ class Worker(object):
 
     def signal_handler(self, signum, stack_handler):
         if signum == signal.SIGUSR1:
-            self.logger.debug("%s got sigusr1", self.name)
+            self.logger.info("%s got sigusr1", self.name)
             self.read_incoming_cmd()
 
     def stop(self):
@@ -113,7 +131,7 @@ class Worker(object):
 
     def do_work(self, work):
         data = self.work_fn(work)
-        self.pipe.send(dict(result=data))
+        self.pipe.send(data)
 
     def run(self):
         self.logger.info("%s ready", self.name)
@@ -136,15 +154,21 @@ class Shredder(object):
         self.logger = logging.getLogger('shredder')
         self.work_generator = work_generator
         self.work_fn = work_fn
+        self.aggregator = aggregator
         self.num_processes = num_processes
         self.queue = JoinableQueue()
         self.workers = Workers()
 
     def signal_handler(self, signum, stack_handler):
-        self.logger.info("shutting down, %d", signum)
+        self.logger.info("shutting down")
+        signal.setitimer(signal.ITIMER_REAL, 0, 0) # clear
         self.workers.shutdown()
-        self.queue.join()
-        sys.exit(0)
+        os._exit(0)
+
+    def aggregate_results(self, signum, stack_handler):
+        msgs = self.workers.read()
+        for msg in msgs:
+            self.aggregator(msg)
 
     def launch_workers(self):
         for i in range(0, self.num_processes):
@@ -157,19 +181,21 @@ class Shredder(object):
             if chunk is None:
                 self.logger.warn("Got None from generator...ignoring")
                 continue
-            #pdb.set_trace()
+
             self.queue.put(copy.deepcopy(chunk))
 
             while self.queue.qsize() > self.num_processes:
                 sleep(5)
 
     def start(self):
-        signal.signal(signal.SIGINT, self.signal_handler)
-
         self.launch_workers()
 
-        sleep(10)
-        #self.shred()
+        signal.signal(signal.SIGINT, self.signal_handler)
+
+        signal.signal(signal.SIGALRM, self.aggregate_results)
+        signal.setitimer(signal.ITIMER_REAL, 5, 5)
+
+        self.shred()
 
         self.logger.info("Shredded; workers will shutdown when queue empties")
 
