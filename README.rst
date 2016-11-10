@@ -34,7 +34,7 @@ Getting Started
     >>>
     >>> function worker(shredder, data):
     >>>    results = do_something_with_data(data)
-    >>>    shredder.publish(results)
+    >>>    return results
     >>>
     >>> function aggregator(results):
     >>>    dosomethingwitresults
@@ -43,6 +43,7 @@ Getting Started
     >>>         work_generator=work_generator,
     >>>         worker=worker,
     >>>         aggregator=aggregator,
+    >>>         num_processes=5,
     >>>  )
     >>>
     >>>  shredder.start()
