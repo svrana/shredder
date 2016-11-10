@@ -18,38 +18,97 @@ class WorkerContext(object):
         self.pid = process.pid
 
     def close(self):
-        self.pipe.close()
-        self.process.join()
+        if self.pipe:
+            self.pipe.close()
+            self.pipe = None
 
-    def send_shutdown(self, shutdown_type):
-        #if shutdown_type == 'soft':
-        #    self.pipe.send(dict(shutdown=shutdown_type))
-        #else:
-        os.kill(self.pid, signal.SIGINT)
+        if self.process:
+            self.process.join()
+            self.process = None
+
+    def send_shutdown(self):
+        self.pipe.send(dict(shutdown='hard'))
+        os.kill(self.pid, signal.SIGUSR1)
+
+
+class Workers(object):
+    """ Holds on to all WorkerContexts and facilitates iteracting with each
+    process. """
+    def __init__(self):
+        self.workers = []
+
+    def add(self, worker):
+        self.workers.append(worker)
+
+    def cleanup(self):
+        for worker in self.workers:
+            worker.close()
+
+        self.workers = []
+
+    def shutdown(self):
+        for worker in self.workers:
+            worker.send_shutdown()
+
+        sleep(.1) # give workers time to read pipe
+        self.cleanup()
+
+    def send_poison_pill(self, queue):
+        for _ in self.workers:
+            queue.put(None)
+
 
 class Worker(object):
+    """ This is the state of the worker from the point of view of the worker
+    process. It receives data from the queue and feeds it to the function
+    provided. """
     def __init__(self, name, queue, pipe, work_fn):
         self.logger = logging.getLogger('shredder.worker')
-        self.name = name
+        self.name = 'worker-%d' % name
         self.queue = queue
         self.pipe = pipe
         self.work_fn = work_fn
 
     @classmethod
     def start(cls, name, queue, pipe, work_fn):
-
         worker = cls(name, queue, pipe, work_fn)
 
         signal.signal(signal.SIGINT, worker.signal_handler)
+        signal.signal(signal.SIGUSR1, worker.signal_handler)
 
         worker.run()
 
-    def signal_handler(self, signum, stack_handler):
+    def dispatch_cmd(self, command, value):
+        if command == 'shutdown':
+            self.quit()
+        else:
+            self.logger.warn("unknown command: %s with value: %s", command, value)
+
+    def read_incoming_cmd(self):
+        got_msg = False
+
+        while self.pipe.poll():
+            msg_dict = self.pipe.recv()
+            got_msg = True
+            for k,v in msg_dict.iteritems():
+                self.dispatch_cmd(k, v)
+
+        if got_msg is False:
+            self.logger.warn("%s expected a message", self.name)
+
+    def quit(self):
+        self.logger.info('%s quitting', self.name)
         self.stop()
-        sys.exit(0)
+        sys.stdout.flush()
+        os._exit(0)
+
+    def signal_handler(self, signum, stack_handler):
+        if signum == signal.SIGUSR1:
+            self.logger.debug("%s got sigusr1", self.name)
+            self.read_incoming_cmd()
 
     def stop(self):
-        self.logger.info("worker%d stopping", self.name)
+        self.logger.info("%s stopping", self.name)
         self.pipe.close()
 
     def do_work(self, work):
@@ -57,12 +116,18 @@ class Worker(object):
         self.pipe.send(dict(result=data))
 
     def run(self):
-        self.logger.info("worker%d ready", self.name)
+        self.logger.info("%s ready", self.name)
 
         while True:
             work = self.queue.get()
-            self.do_work(work)
-            self.queue.task_done()
+            if work is None:
+                self.logger.info("%s finished its work, shutting down", self.name)
+                self.queue.task_done()
+                self.quit()
+            else:
+                self.do_work(work)
+                self.queue.task_done()
+
 
 class Shredder(object):
     def __init__(self, work_generator, work_fn, aggregator, num_processes):
@@ -73,47 +138,55 @@ class Shredder(object):
         self.work_fn = work_fn
         self.num_processes = num_processes
         self.queue = JoinableQueue()
-        self.workers = {}
+        self.workers = Workers()
 
-    def shutdown_workers(self, shutdown_type):
-        for context in self.workers.itervalues():
-            context.send_shutdown(shutdown_type)
-            context.close()
-
+    def signal_handler(self, signum, stack_handler):
+        self.logger.info("shutting down, %d", signum)
+        self.workers.shutdown()
         self.queue.join()
+        sys.exit(0)
 
-    def soft_kill(self):
-        self.logger.info("interrupt received..")
-        self.shutdown_workers('hard')
+    def launch_workers(self):
+        for i in range(0, self.num_processes):
+            self.logger.info("launching worker-%d", i)
+            worker = self.launch(i)
+            self.workers.add(worker)
+
+    def shred(self):
+        for chunk in self.work_generator():
+            if chunk is None:
+                self.logger.warn("Got None from generator...ignoring")
+                continue
+            #pdb.set_trace()
+            self.queue.put(copy.deepcopy(chunk))
+
+            while self.queue.qsize() > self.num_processes:
+                sleep(5)
 
     def start(self):
-        #signal.signal(signal.SIGINT, self.soft_kill)
-        #signal.signal(signal.SIGTERM, signal.SIG_DFL)
-        for i in range(0, self.num_processes):
-            self.logger.info("launching worker%d", i)
-            self.launch(i)
+        signal.signal(signal.SIGINT, self.signal_handler)
 
-#        import pdb
-#        pdb.set_trace()
-#
-#        for chunk in self.work_generator():
-#            self.queue.put(copy.deepcopy(chunk))
-#
-#            while self.queue.qsize() > 1:
-#                sleep(5)
+        self.launch_workers()
 
-        self.logger.info("Data shredded..")
+        sleep(10)
+        #self.shred()
 
-        self.shutdown_workers('soft')
+        self.logger.info("Shredded; workers will shutdown when queue empties")
+
+        self.workers.send_poison_pill(self.queue)
+        self.queue.join()
+        self.workers.cleanup()
 
         self.logger.info("Done")
 
     def launch(self, name):
-        """ Start a new Worker process that will consume work from the queue. """
+        """ Start a new Worker process that will consume work from the queue.
+        """
         parent_pipe, child_pipe = Pipe()
 
         process = Process(target=Worker.start,
                           args=(name, self.queue, child_pipe, self.work_fn))
         process.start()
 
-        self.workers[name] = WorkerContext(name, process, parent_pipe)
+        worker = WorkerContext(name, process, parent_pipe)
+        return worker
