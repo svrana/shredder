@@ -26,6 +26,9 @@ bdist: cleanmeta
 install:
 	python setup.py install
 
-publish: sdist
+register: sdist
 	python setup.py register upload
+
+publish: cleanmeta
+	python setup.py sdist upload
 
