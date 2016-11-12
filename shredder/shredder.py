@@ -1,5 +1,5 @@
 import copy
-from multiprocessing import Pipe, Process, JoinableQueue
+from multiprocessing import cpu_count, Pipe, Process, JoinableQueue
 import logging
 import os
 import signal
@@ -139,7 +139,7 @@ class Worker(object):
         while True:
             try:
                 work = self.queue.get()
-            except (KeyboardInterrupt, SystemExit):
+            except KeyboardInterrupt:
                 break
             if work is None:
                 self.logger.debug("%s finished its work, shutting down", self.name)
@@ -151,14 +151,26 @@ class Worker(object):
 
 
 class Shredder(object):
-    def __init__(self, work_generator, work_fn, aggregator, num_processes):
-        logging.basicConfig(level=logging.INFO)
+    def __init__(self, work_generator, work_fn, aggregator,
+                 num_processes=0,
+                 log_level='info'):
 
+        if log_level.lower() not in ['warn', 'info', 'debug']:
+            raise Exception('invalid log level')
+
+        logging.basicConfig(level=getattr(logging, log_level.upper()))
         self.logger = logging.getLogger('shredder')
+
+        if not num_processes:
+            self.num_processes = cpu_count()
+            self.logger.info("num_processes not set, "
+                             "defaulting to cpu_count %d", self.num_processes)
+        else:
+            self.num_processes = num_processes
+
         self.work_generator = work_generator
         self.work_fn = work_fn
         self.aggregator = aggregator
-        self.num_processes = num_processes
         self.queue = JoinableQueue()
         self.workers = Workers()
 
