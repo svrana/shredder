@@ -115,18 +115,18 @@ class Worker(object):
             self.logger.warn("%s expected a message", self.name)
 
     def quit(self):
-        self.logger.info('%s quitting', self.name)
+        self.logger.debug('%s quitting', self.name)
         self.stop()
         sys.stdout.flush()
-        os._exit(0)
+        sys.exit(0)
 
     def signal_handler(self, signum, stack_handler):
         if signum == signal.SIGUSR1:
-            self.logger.info("%s got sigusr1", self.name)
+            self.logger.debug("%s got sigusr1", self.name)
             self.read_incoming_cmd()
 
     def stop(self):
-        self.logger.info("%s stopping", self.name)
+        self.logger.debug("%s stopping", self.name)
         self.pipe.close()
 
     def do_work(self, work):
@@ -134,12 +134,15 @@ class Worker(object):
         self.pipe.send(data)
 
     def run(self):
-        self.logger.info("%s ready", self.name)
+        self.logger.debug("%s ready", self.name)
 
         while True:
-            work = self.queue.get()
+            try:
+                work = self.queue.get()
+            except KeyboardInterrupt:
+                break
             if work is None:
-                self.logger.info("%s finished its work, shutting down", self.name)
+                self.logger.debug("%s finished its work, shutting down", self.name)
                 self.queue.task_done()
                 self.quit()
             else:
@@ -163,7 +166,7 @@ class Shredder(object):
         self.logger.info("shutting down")
         signal.setitimer(signal.ITIMER_REAL, 0, 0) # clear
         self.workers.shutdown()
-        os._exit(0)
+        sys.exit(0)
 
     def aggregate_results(self, signum, stack_handler):
         msgs = self.workers.read()
