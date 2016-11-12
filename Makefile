@@ -5,6 +5,7 @@ help:
 	@echo "   bdist 	make an egg distribution"
 	@echo "   install 	install package"
 	@echo "   publish 	publish to pypi.python.org"
+	@echo "   register 	register package at pypi.python.org"
 
 cleanmeta:
 	-rm -rf shredder.egg-info
