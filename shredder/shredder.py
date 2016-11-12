@@ -139,7 +139,7 @@ class Worker(object):
         while True:
             try:
                 work = self.queue.get()
-            except KeyboardInterrupt:
+            except (KeyboardInterrupt, SystemExit):
                 break
             if work is None:
                 self.logger.debug("%s finished its work, shutting down", self.name)
