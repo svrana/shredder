@@ -119,7 +119,7 @@ class Worker(object):
         self.logger.debug('%s quitting', self.name)
         self.stop()
         sys.stdout.flush()
-        sys.exit(0)
+        os._exit(0)
 
     def signal_handler(self, signum, stack_handler):
         if signum == signal.SIGUSR1:
