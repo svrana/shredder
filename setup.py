@@ -5,7 +5,7 @@ from setuptools import setup
 
 
 setup(name='shredder',
-      version=.2,
+      version=.4,
       description='Simple multiprocessing',
       url='http://github.com/svrana/shredder',
       author='Shaw Vrana',

@@ -93,6 +93,7 @@ class Worker(object):
         worker = cls(name, queue, pipe, work_fn)
 
         signal.signal(signal.SIGUSR1, worker.signal_handler)
+        signal.signal(signal.SIGINT, worker.signal_handler)
 
         worker.run()
 
