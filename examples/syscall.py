@@ -2,8 +2,13 @@
 
 """
 A contrived example of shredder usage. It works but shredder runs the worker
-function in a process it creates itself, so we're creating 2 x num_cpus
-processes here.
+function in a process it creates itself, so we're creating num_cpus processes +
+a process for each interface. The overhead of the queue and the message passing
+probably won't be worth for short-lived programs.
+
+You can compare this program to syscall-compare.py which does the same thing
+but from one process. It runs slightly faster on my 8 core machine.
+
 
 Run this program:
     PYTHONPATH=. python example/syscall.py
@@ -39,4 +44,6 @@ def aggregator(interface_dict):
 shredder = Shredder(work_generator, worker, aggregator, log_level='info')
 shredder.start()
 
+print "Found %d network interfaces: %s " % (len(ifconfig_by_iface.keys()),
+                                            ifconfig_by_iface.keys())
 print ifconfig_by_iface
