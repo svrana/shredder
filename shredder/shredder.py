@@ -133,6 +133,7 @@ class Worker(object):
     def do_work(self, work):
         data = self.work_fn(work)
         self.pipe.send(data)
+        self.logger.debug("%s: output: %s", self.name, data)
 
     def run(self):
         self.logger.debug("%s ready", self.name)
@@ -147,6 +148,7 @@ class Worker(object):
                 self.queue.task_done()
                 self.quit()
             else:
+                self.logger.debug("%s: received: %s", self.name, work)
                 self.do_work(work)
                 self.queue.task_done()
 
@@ -193,15 +195,21 @@ class Shredder(object):
             self.workers.add(worker)
 
     def shred(self):
+        count = 0
+
         for chunk in self.work_generator():
             if chunk is None:
                 self.logger.warn("Got None from generator...ignoring")
                 continue
 
+            count += 1
             self.queue.put(copy.deepcopy(chunk))
 
             while self.queue.qsize() > self.num_processes:
+                self.logger.debug("Queue size exceeds process count, sleeping..")
                 sleep(5)
+
+        self.logger.debug("sent %d messages to the queue", count)
 
     def start(self):
         self.launch_workers()
@@ -217,6 +225,7 @@ class Shredder(object):
 
         self.workers.send_poison_pill(self.queue)
         self.queue.join()
+
         self.workers.cleanup()
 
         self.logger.info("Done")
