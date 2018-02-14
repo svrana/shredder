@@ -226,6 +226,8 @@ class Shredder(object):
         self.workers.send_poison_pill(self.queue)
         self.queue.join()
 
+        # make sure there aren't any results to aggregate before exiting
+        self.aggregate_results(None, None)
         self.workers.cleanup()
 
         self.logger.info("Done")
