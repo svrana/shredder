@@ -1,12 +1,15 @@
 #!/usr/bin/env python
 
-import os
 from setuptools import setup
 
 
+with open('README.md') as f:
+    long_description = f.read()
+
 setup(name='shredder',
-      version=.4,
+      version=.7,
       description='Simple multiprocessing',
+      long_description=long_description,
       url='http://github.com/svrana/shredder',
       author='Shaw Vrana',
       author_email='shaw@vranix.com',
@@ -18,4 +21,4 @@ setup(name='shredder',
       install_requires=[
       ],
       zip_safe=False,
-      )
+)
